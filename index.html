@@ -29,11 +29,6 @@
   #gameOverPanel { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.9); color: white; padding: 20px; border-radius: 10px; display: none; text-align: center; }
   #gameOverPanel button { margin-top: 10px; padding: 5px 10px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
 </style>
-
-<!-- Firebase SDK -->
-<script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js"></script>
-
 </head>
 <body>
 <button id="recordsBtn">Records</button>
@@ -73,22 +68,6 @@
 <canvas id="gameCanvas" width="400" height="600"></canvas>
 
 <script>
-// =================== FIREBASE ===================
-const firebaseConfig = {
-  apiKey: "AIzaSyBrApoHdVSYDCXQKvDWNvPKUFSjsH6-K9Y",
-  authDomain: "emoji-jump-1a585.firebaseapp.com",
-  databaseURL: "https://emoji-jump-1a585-default-rtdb.firebaseio.com",
-  projectId: "emoji-jump-1a585",
-  storageBucket: "emoji-jump-1a585.appspot.com",
-  messagingSenderId: "1051213900276",
-  appId: "1:1051213900276:web:07820c73378f4502eef1a1",
-  measurementId: "G-67TZKBCZ23"
-};
-
-const app = firebase.initializeApp(firebaseConfig);
-const db = firebase.database();
-
-// =================== JOGO ===================
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
 
@@ -96,6 +75,7 @@ const emojis = ["🧍", "🦊", "🤖", "👻", "🐱", "🐷", "🐙", "🐵"];
 const bgColors = ["#333", "#004466", "#2E003E", "#3E4E50", "#222900", "#1A3C2E", "#512E5F", "#5D3A00"];
 
 let currentEmojiIndex = 0;
+
 const player = { x: 0, y: 0, width: 40, height: 40, dy: 0, dx: 0, emoji: emojis[currentEmojiIndex] };
 
 const gravity = 0.5, jumpStrength = -12, superJumpStrength = -22, moveSpeed = 4;
@@ -117,38 +97,27 @@ let startTime = 0, elapsedTime = 0;
 // DeltaTime
 let lastTime = Date.now();
 
-// Game Over
-let isGameOver = false;
+// Records
+let records = JSON.parse(localStorage.getItem("records")) || [];
 
-// =================== RECORDS ===================
 function saveRecord(name, score, time) {
-  const newRecordRef = db.ref("records").push();
-  newRecordRef.set({ name, score, time });
+  records.push({ name, score, time });
+  records.sort((a, b) => b.score !== a.score ? b.score - a.score : a.time - b.time);
+  records = records.slice(0, 10);
+  localStorage.setItem("records", JSON.stringify(records));
 }
 
 function showRecords() {
   const list = document.getElementById("recordsList");
   list.innerHTML = "";
-
-  db.ref("records")
-    .orderByChild("score")
-    .limitToLast(10)
-    .once("value", snapshot => {
-      let records = [];
-      snapshot.forEach(child => {
-        records.push(child.val());
-      });
-
-      records.reverse();
-      records.forEach(r => {
-        const minutes = Math.floor(r.time / 60);
-        const seconds = r.time % 60;
-        const timeStr = `${minutes}:${seconds.toString().padStart(2,"0")}s`;
-        const li = document.createElement("li");
-        li.textContent = `${r.name} - ${r.score} pts - ${timeStr}`;
-        list.appendChild(li);
-      });
-    });
+  records.forEach(r => {
+    const minutes = Math.floor(r.time / 60);
+    const seconds = r.time % 60;
+    const timeStr = `${minutes}:${seconds.toString().padStart(2,"0")}s`;
+    const li = document.createElement("li");
+    li.textContent = `${r.name} - ${r.score} pts - ${timeStr}`;
+    list.appendChild(li);
+  });
 }
 
 document.getElementById("recordsBtn").addEventListener("click", () => {
@@ -162,13 +131,15 @@ document.getElementById("updateLogBtn").addEventListener("click", () => {
   panel.style.display = panel.style.display === "none" ? "block" : "none";
 });
 
+// Game Over
 const gameOverPanel = document.getElementById("gameOverPanel");
 document.getElementById("restartBtn").addEventListener("click", () => {
   gameOverPanel.style.display = "none";
   resetGame();
 });
 
-// =================== FUNÇÕES DO JOGO ===================
+let isGameOver = false;
+
 function createPlatform(x, y, width=100, height=10, type="normal") {
   return { x, y, width, height, type, dir: 1, speed: 1 };
 }
@@ -209,7 +180,7 @@ function resetGame() {
 }
 
 function update(deltaTime) {
-  const dt = deltaTime / 16.6667; // DeltaTime fixo para ~60FPS
+  const dt = deltaTime / 16.6667; // Normaliza para 60FPS
 
   // Movimento horizontal
   if (keys["arrowleft"]||keys["a"]) player.dx=-moveSpeed*dt;
@@ -345,4 +316,3 @@ gameLoop();
 </script>
 </body>
 </html>
-
