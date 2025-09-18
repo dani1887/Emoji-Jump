@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8" />
+<title>Emoji Jumper</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background-color: #333;
+    font-family: sans-serif;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: start;
+    transition: background 0.5s ease;
+  }
+  #score { margin-top: 10px; color: #fff; font-size: 24px; font-weight: bold; z-index: 10; }
+  #time { margin-top: 5px; color: #fff; font-size: 18px; font-weight: bold; z-index: 10; }
+  #superJumpContainer { width: 300px; height: 20px; background: #555; margin-top: 8px; border-radius: 10px; overflow: hidden; position: relative; display: none; }
+  #superJumpBar { height: 100%; background: #00e676; width: 0%; transition: width 0.1s linear; }
+  #superJumpText { position: absolute; width: 100%; text-align: center; top: 0; left: 0; color: white; font-size: 14px; font-weight: bold; pointer-events: none; }
+  canvas { background: #333; margin-top: 10px; border-radius: 8px; transition: background 0.5s ease; }
+  #recordsBtn, #updateLogBtn { position: absolute; top: 10px; padding: 5px 10px; font-size: 14px; font-weight: bold; border: none; border-radius: 6px; cursor: pointer; }
+  #recordsBtn { left: 10px; }
+  #updateLogBtn { left: 120px; }
+  #playerName { position: absolute; top: 50px; left: 10px; padding: 4px; font-size: 14px; border-radius: 6px; border: none; }
+  #recordsPanel, #updateLogPanel { position: absolute; top: 90px; left: 10px; background: rgba(0,0,0,0.8); color: white; padding: 10px; border-radius: 8px; width: 260px; max-height: 300px; overflow-y: auto; display: none; }
+  #eventPanel { position: absolute; top: 10px; right: 10px; background: rgba(120,0,0,0.85); color: white; padding: 8px 10px; border-radius: 8px; font-size: 14px; text-align: center; z-index: 20; }
+  #gameOverPanel { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.9); color: white; padding: 20px; border-radius: 10px; display: none; text-align: center; z-index: 30; }
+  #gameOverPanel button { margin-top: 10px; padding: 5px 10px; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
+  #portalHint { position:absolute; top:80px; right:10px; color:#ffdddd; font-size:12px; text-align:center; }
+  /* Fogo ability UI */
+  #fireContainer { position:absolute; top:110px; left:10px; width:200px; height:18px; background:#444; border-radius:9px; overflow:hidden; display:none; z-index:25;}
+  #fireBar { width:0%; height:100%; background:#ff4500; transition:width 0.1s linear; }
+  #abilityHint { position:absolute; top:132px; left:10px; color:#ffccaa; font-size:12px; display:none; }
+</style>
+</head>
+<body>
+<button id="recordsBtn">Records</button>
+<button id="updateLogBtn">Update Log</button>
+<input type="text" id="playerName" placeholder="Seu nome" maxlength="12" />
+
+<div id="recordsPanel">
+  <h3>Top 10 Records</h3>
+  <ol id="recordsList"></ol>
+</div>
+
+<div id="updateLogPanel">
+  <h3>Update2</h3>
+  <ul>
+    <li>ºEvento dos Demonios</li>
+    <li>ºNovas plataformas Preta e vermelha</li>
+    <li>ºNova abilidade</li>
+    <li>ºCorreção de bugs</li>
+  </ul>
+</div>
+
+<div id="eventPanel">
+  👹 Evento Demoníaco<br>
+  <span id="eventTimer">Carregando...</span>
+  <div id="portalHint" style="display:none;">Portal disponível! Entre para o evento.</div>
+</div>
+
+<div id="gameOverPanel">
+  <h2>Você perdeu!</h2>
+  <p id="finalScore">Pontuação: 0</p>
+  <p id="finalTime">Tempo: 0:00</p>
+  <button id="restartBtn">Recomeçar</button>
+</div>
+
+<div id="score">Pontuação: 0</div>
+<div id="time">Tempo: 0s</div>
+
+<div id="superJumpContainer">
+  <div id="superJumpBar"></div>
+  <div id="superJumpText"></div>
+</div>
+
+<!-- Fire ability UI (aparece se o jogador tem ability) -->
+<div id="fireContainer"><div id="fireBar"></div></div>
+<div id="abilityHint">Pressione F ou L para criar plataforma (quando barra cheia)</div>
+
+<canvas id="gameCanvas" width="400" height="600"></canvas>
+
+<script>
+/* Index (mundo normal) completo com:
+   - plataformas breakable (2s ; 1s depois dos 10k)
+   - evento demon (portal spawn)
+   - fire-ability recognition by name and F/L
+*/
+
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+const emojis = ["🧍", "🦊", "🤖", "👻", "🐱", "🐷", "🐙", "🐵"];
+const bgColors = ["#333", "#004466", "#2E003E", "#3E4E50", "#222900", "#1A3C2E", "#512E5F", "#5D3A00"];
+let currentEmojiIndex = 0;
+
+const player = { x: 0, y: 0, width: 40, height: 40, dy: 0, dx: 0, emoji: emojis[currentEmojiIndex] };
+const gravity = 0.5, jumpStrength = -12, superJumpStrength = -22, moveSpeed = 5;
+
+let platforms = [], keys = {}, score = 0;
+
+// Super jump
+let superJumpUnlocked = false, superJumpCharge = 0;
+const maxSuperJumpCharge = 100, chargeRate = 0.2;
+const superJumpBar = document.getElementById("superJumpBar");
+const superJumpText = document.getElementById("superJumpText");
+const superJumpContainer = document.getElementById("superJumpContainer");
+
+// magicBall (AMARELA)
+let magicBall = null;
+
+// portal for demon event
+let portal = null; // { x, y, radius }
+let portalExists = false;
+
+// event timing
+const EVENT_WAIT = 15 * 60 * 1000;    // 15 minutes waiting
+const EVENT_ACTIVE = 15 * 60 * 1000;  // 15 minutes active
+let eventActive = false; // computed by timer
+const eventTimerEl = document.getElementById("eventTimer");
+const portalHintEl = document.getElementById("portalHint");
+
+// time
+let startTime = 0, elapsedTime = 0;
+let lastTime = Date.now();
+
+// records
+let records = JSON.parse(localStorage.getItem("records")) || [];
+
+// Fire ability for normal world
+let firePlatforms = []; // temporary red platforms in normal world
+let fireCharge = 0, fireMax = 100;
+const fireContainer = document.getElementById("fireContainer");
+const fireBar = document.getElementById("fireBar");
+const abilityHint = document.getElementById("abilityHint");
+
+// ---------- records ----------
+function saveRecord(name, score, time) {
+  records.push({ name, score, time });
+  records.sort((a, b) => b.score !== a.score ? b.score - a.score : a.time - b.time);
+  records = records.slice(0, 10);
+  localStorage.setItem("records", JSON.stringify(records));
+}
+function showRecords() {
+  const list = document.getElementById("recordsList");
+  list.innerHTML = "";
+  records.forEach(r => {
+    const minutes = Math.floor(r.time / 60);
+    const seconds = r.time % 60;
+    const timeStr = `${minutes}:${seconds.toString().padStart(2,"0")}s`;
+    const li = document.createElement("li");
+    li.textContent = `${r.name} - ${r.score} pts - ${timeStr}`;
+    list.appendChild(li);
+  });
+}
+document.getElementById("recordsBtn").addEventListener("click", () => {
+  const panel = document.getElementById("recordsPanel");
+  panel.style.display = panel.style.display === "none" ? "block" : "none";
+  showRecords();
+});
+document.getElementById("updateLogBtn").addEventListener("click", () => {
+  const panel = document.getElementById("updateLogPanel");
+  panel.style.display = panel.style.display === "none" ? "block" : "none";
+});
+
+// ---------- game over ----------
+const gameOverPanel = document.getElementById("gameOverPanel");
+document.getElementById("restartBtn").addEventListener("click", () => {
+  gameOverPanel.style.display = "none";
+  resetGame();
+});
+let isGameOver = false;
+
+// ---------- platforms ----------
+function createPlatform(x, y, width = 100, height = 10, type = "normal") {
+  // type: "normal", "moving", "breakable"
+  return { x, y, width, height, type, dir: 1, speed: 1, breakTimer: null };
+}
+
+// ---------- magic ball ----------
+function spawnMagicBall() {
+  const platform = createPlatform(Math.random() * 250, player.y - 300);
+  platforms.push(platform);
+  magicBall = { x: platform.x + 35, y: platform.y - 20, radius: 10, collected: false };
+}
+
+// ---------- reset ----------
+function resetGame() {
+  isGameOver = false;
+  platforms = [];
+  portal = null; portalExists = false;
+  const firstPlat = createPlatform(180, 550);
+  platforms.push(firstPlat);
+
+  player.x = firstPlat.x + firstPlat.width / 2 - player.width / 2;
+  player.y = firstPlat.y - player.height;
+
+  player.dy = 0; score = 0;
+  superJumpCharge = 0; superJumpUnlocked = false;
+  magicBall = null; currentEmojiIndex = 0;
+  player.emoji = emojis[currentEmojiIndex];
+
+  superJumpBar.style.width = "0%";
+  superJumpContainer.style.display = "none";
+
+  // hide fire UI until we check name/ability
+  fireContainer.style.display = "none";
+  abilityHint.style.display = "none";
+  fireCharge = 0;
+  firePlatforms = [];
+
+  document.body.style.backgroundColor = bgColors[currentEmojiIndex];
+  canvas.style.backgroundColor = bgColors[currentEmojiIndex];
+
+  for (let i = 1; i < 4; i++) {
+    // initial mix: some platforms could be breakable or moving from start
+    const rnd = Math.random();
+    const type = rnd < 0.12 ? "breakable" : (rnd < 0.35 ? "moving" : "normal");
+    platforms.push(createPlatform(Math.random() * 300, 550 - i * 140, 100, 10, type));
+  }
+
+  startTime = Date.now();
+  lastTime = Date.now();
+}
+
+// ---------- event timer ----------
+function updateEventTimer() {
+  const now = Date.now();
+  const baseTime = new Date().setHours(0, 0, 0, 0);
+  const cycle = (now - baseTime) % (EVENT_WAIT + EVENT_ACTIVE);
+  if (cycle < EVENT_WAIT) {
+    eventActive = false;
+    const remain = EVENT_WAIT - cycle;
+    const mins = Math.floor(remain / 60000);
+    const secs = Math.floor((remain % 60000) / 1000);
+    eventTimerEl.textContent = `Começa em ${mins}:${String(secs).padStart(2,"0")}`;
+    portalHintEl.style.display = "none";
+  } else {
+    eventActive = true;
+    const remain = EVENT_WAIT + EVENT_ACTIVE - cycle;
+    const mins = Math.floor(remain / 60000);
+    const secs = Math.floor((remain % 60000) / 1000);
+    eventTimerEl.textContent = `Ativo! Termina em ${mins}:${String(secs).padStart(2,"0")}`;
+    portalHintEl.style.display = portalExists ? "block" : "none";
+  }
+}
+updateEventTimer();
+setInterval(updateEventTimer, 1000);
+
+// ---------- abilities helpers ----------
+function loadAbilities() {
+  return JSON.parse(localStorage.getItem("abilities") || "{}");
+}
+function hasFireAbilityForName(name) {
+  if (!name) return false;
+  const abilities = loadAbilities();
+  return !!abilities[name];
+}
+
+// ---------- update ----------
+function update(deltaTime) {
+  const dt = deltaTime / 16.6667; // normalize to 60fps
+
+  // horizontal movement
+  if (keys["arrowleft"] || keys["a"]) player.dx = -moveSpeed * dt;
+  else if (keys["arrowright"] || keys["d"]) player.dx = moveSpeed * dt;
+  else player.dx = 0;
+  player.x += player.dx;
+  if (player.x < -player.width) player.x = canvas.width;
+  if (player.x > canvas.width) player.x = -player.width;
+
+  // gravity
+  player.dy += gravity * dt;
+  player.y += player.dy * dt;
+
+  // combine platforms + firePlatforms for collision checks
+  const allPlatforms = platforms.concat(firePlatforms);
+
+  // platforms logic
+  for (let plat of platforms) {
+    if (plat.type === "moving") {
+      let speed = plat.speed * dt;
+      if (score >= 10000) speed *= 2.5;
+      plat.x += plat.dir * speed;
+      if (plat.x < 0 || plat.x + plat.width > canvas.width) plat.dir *= -1;
+    }
+
+    if (player.dy > 0 &&
+      player.x < plat.x + plat.width &&
+      player.x + player.width > plat.x &&
+      player.y + player.height < plat.y + 10 &&
+      player.y + player.height + player.dy >= plat.y) {
+
+      // player landed on platform
+      player.dy = jumpStrength;
+
+      // if breakable, start timer to remove (delay depends on current score)
+      if (plat.type === "breakable" && !plat.breakTimer) {
+        // If player already has >=10000 points at the moment of stepping, remove after 1s, otherwise 2s
+        const removeDelay = score >= 10000 ? 1000 : 2000;
+        plat.breakTimer = setTimeout(() => {
+          platforms = platforms.filter(p => p !== plat);
+          // if portal was placed on that platform, also remove portal
+          if (portal && Math.abs(portal.x - (plat.x + plat.width / 2)) < 50 && Math.abs(portal.y - (plat.y - 20)) < 50) {
+            portal = null; portalExists = false;
+            portalHintEl.style.display = "none";
+          }
+        }, removeDelay);
+      }
+    }
+  }
+
+  // collision with firePlatforms (temporary red platforms)
+  for (let fplat of firePlatforms) {
+    if (player.dy > 0 &&
+      player.x < fplat.x + fplat.width &&
+      player.x + player.width > fplat.x &&
+      player.y + player.height < fplat.y + 10 &&
+      player.y + player.height + player.dy >= fplat.y) {
+      player.dy = jumpStrength;
+    }
+  }
+
+  // super jump input
+  if (superJumpUnlocked && (keys["s"] || keys["arrowdown"]) && superJumpCharge >= maxSuperJumpCharge) {
+    player.dy = superJumpStrength;
+    superJumpCharge = 0;
+  }
+
+  // vertical scroll
+  if (player.y < 300) {
+    const diff = 300 - player.y;
+    player.y = 300;
+    platforms.forEach(p => p.y += diff);
+    if (magicBall) magicBall.y += diff;
+    if (portal) portal.y += diff; // move portal with world
+    firePlatforms.forEach(fp => fp.y += diff);
+    score += Math.floor(diff);
+
+    // emoji + bg change per 1000 points
+    let newEmojiIndex = Math.floor(score / 1000) % emojis.length;
+    if (newEmojiIndex !== currentEmojiIndex) {
+      currentEmojiIndex = newEmojiIndex;
+      player.emoji = emojis[currentEmojiIndex];
+      document.body.style.backgroundColor = bgColors[currentEmojiIndex];
+      canvas.style.backgroundColor = bgColors[currentEmojiIndex];
+    }
+
+    // spawn magic ball as before
+    if (score >= 1000 && !magicBall && !superJumpUnlocked) spawnMagicBall();
+  }
+
+  // spawn new platforms until top filled, and possibly spawn portal when event active
+  while (platforms[platforms.length - 1].y > 0) {
+    const rnd = Math.random();
+    let type = "normal";
+    if (rnd < 0.12) type = "breakable";      // black breakable
+    else if (rnd < 0.35) type = "moving";
+    const newPlat = createPlatform(Math.random() * 300, platforms[platforms.length - 1].y - 140, 100, 10, type);
+    platforms.push(newPlat);
+
+    // Portal spawn chance: only while event is active, score >=10k, and no portal exists
+    if (!portalExists && eventActive && score >= 10000) {
+      if (Math.random() < 0.05) { // 5% chance
+        portal = { x: newPlat.x + newPlat.width / 2, y: newPlat.y - 25, radius: 18 };
+        portalExists = true;
+        portalHintEl.style.display = "block";
+      }
+    }
+  }
+
+  platforms = platforms.filter(p => p.y < canvas.height + 100);
+
+  // game over
+  if (player.y > canvas.height && !isGameOver) {
+    const name = document.getElementById("playerName").value || "???";
+    saveRecord(name, score, elapsedTime);
+    isGameOver = true;
+    gameOverPanel.style.display = "block";
+    document.getElementById("finalScore").innerText = "Pontuação: " + score;
+    document.getElementById("finalTime").innerText = "Tempo: " + Math.floor(elapsedTime / 60) + ":" + String(elapsedTime % 60).padStart(2, "0");
+  }
+
+  // magic ball pickup
+  if (magicBall && !magicBall.collected) {
+    const dx = (player.x + player.width / 2) - magicBall.x;
+    const dy = (player.y + player.height / 2) - magicBall.y;
+    if (Math.sqrt(dx * dx + dy * dy) < magicBall.radius + player.width / 2) {
+      magicBall.collected = true;
+      magicBall = null;
+      superJumpUnlocked = true;
+      superJumpContainer.style.display = "block";
+    }
+  }
+
+  // portal collision -> go to demon.html (pass playerName)
+  if (portal && !isGameOver) {
+    const dx = (player.x + player.width / 2) - portal.x;
+    const dy = (player.y + player.height / 2) - portal.y;
+    if (Math.sqrt(dx * dx + dy * dy) < portal.radius + player.width / 2) {
+      const name = document.getElementById("playerName").value || "???";
+      window.location.href = `demon.html?name=${encodeURIComponent(name)}`;
+    }
+  }
+
+  // super jump charge
+  if (superJumpUnlocked && superJumpCharge < maxSuperJumpCharge) {
+    superJumpCharge += chargeRate * dt;
+  }
+  if (superJumpUnlocked) {
+    superJumpBar.style.width = (superJumpCharge / maxSuperJumpCharge * 100) + "%";
+    superJumpText.textContent = superJumpCharge >= maxSuperJumpCharge ? "Pressione S para SUPER SALTO!" : "";
+  }
+
+  // FIRE ability: check if player has ability by name
+  const name = document.getElementById("playerName").value || "";
+  const hasFire = hasFireAbilityForName(name);
+  if (hasFire) {
+    fireContainer.style.display = "block";
+    abilityHint.style.display = "block";
+    // charge fire
+    if (fireCharge < fireMax) fireCharge += 0.3 * dt;
+    fireBar.style.width = (fireCharge / fireMax * 100) + "%";
+    // create platform if pressing F or L and bar full
+    if ((keys["f"] || keys["l"]) && fireCharge >= fireMax) {
+      // spawn platform slightly below player
+      firePlatforms.push({ x: player.x - 30, y: player.y + 40, width: 100, height: 10, spawnTime: Date.now() });
+      fireCharge = 0;
+    }
+  } else {
+    fireContainer.style.display = "none";
+    abilityHint.style.display = "none";
+    fireCharge = 0;
+    fireBar.style.width = "0%";
+  }
+
+  // remove old firePlatforms after 5s
+  firePlatforms = firePlatforms.filter(p => Date.now() - p.spawnTime < 5000);
+}
+
+// ---------- draw ----------
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  for (let plat of platforms) {
+    if (plat.type === "moving") ctx.fillStyle = "#FFD700";      // moving = gold
+    else if (plat.type === "breakable") ctx.fillStyle = "#000000"; // breakable = black
+    else ctx.fillStyle = "#4caf50";
+    ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
+  }
+
+  // draw fire platforms (red) in normal world
+  for (let fp of firePlatforms) {
+    ctx.fillStyle = "#ff0000";
+    ctx.fillRect(fp.x, fp.y, fp.width, fp.height);
+  }
+
+  // draw portal if exists
+  if (portalExists && portal) {
+    ctx.beginPath();
+    ctx.arc(portal.x, portal.y, portal.radius + 6, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(180,20,20,0.12)";
+    ctx.fill();
+    ctx.closePath();
+    ctx.beginPath();
+    ctx.arc(portal.x, portal.y, portal.radius, 0, Math.PI * 2);
+    ctx.fillStyle = "#b71c1c";
+    ctx.fill();
+    ctx.closePath();
+  }
+
+  // draw magic ball (AMARELA)
+  if (magicBall && !magicBall.collected) {
+    ctx.beginPath();
+    ctx.arc(magicBall.x, magicBall.y, magicBall.radius, 0, Math.PI * 2);
+    ctx.fillStyle = "#FFD700";
+    ctx.fill();
+    ctx.closePath();
+  }
+
+  // player emoji
+  ctx.font = "30px serif";
+  ctx.textAlign = "center";
+  ctx.fillText(player.emoji, player.x + player.width / 2, player.y + player.height);
+
+  document.getElementById("score").innerText = "Pontuação: " + score;
+
+  elapsedTime = Math.floor((Date.now() - startTime) / 1000);
+  const minutes = Math.floor(elapsedTime / 60);
+  const seconds = elapsedTime % 60;
+  document.getElementById("time").innerText = "Tempo: " + minutes + ":" + String(seconds).padStart(2, "0");
+}
+
+// ---------- loop & controls ----------
+function gameLoop() {
+  const now = Date.now();
+  const deltaTime = now - lastTime;
+  lastTime = now;
+
+  update(deltaTime);
+  draw();
+
+  requestAnimationFrame(gameLoop);
+}
+
+document.addEventListener("keydown", e => keys[e.key.toLowerCase()] = true);
+document.addEventListener("keyup", e => keys[e.key.toLowerCase()] = false);
+
+// start
+resetGame();
+gameLoop();
+
+</script>
+</body>
+</html>

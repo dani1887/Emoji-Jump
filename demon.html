@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<title>Evento Demoníaco</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background-color: #800000; font-family: sans-serif; overflow:hidden; display:flex; flex-direction:column; align-items:center; justify-content:start; }
+  canvas { background:#800000; margin-top:10px; border-radius:8px; }
+  #score { position:absolute; top:10px; left:10px; color:white; font-size:24px; font-weight:bold; }
+  #time { position:absolute; top:40px; left:10px; color:white; font-size:18px; font-weight:bold; }
+  #fireContainer { position:absolute; top:70px; left:10px; width:200px; height:20px; background:#555; border-radius:10px; overflow:hidden; }
+  #fireBar { width:0%; height:100%; background:#ff4500; }
+  #gameOverPanel { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); background:rgba(0,0,0,0.9); color:white; padding:20px; border-radius:10px; display:none; text-align:center; }
+  #gameOverPanel button { margin-top:10px; padding:5px 10px; border:none; border-radius:6px; cursor:pointer; font-weight:bold; }
+</style>
+</head>
+<body>
+<div id="score">Pontuação: 0</div>
+<div id="time">Tempo: 0s</div>
+<div id="fireContainer"><div id="fireBar"></div></div>
+<div id="gameOverPanel">
+  <h2>Você perdeu!</h2>
+  <p id="finalScore">Pontuação: 0</p>
+  <button id="restartBtn">Voltar</button>
+</div>
+<canvas id="gameCanvas" width="400" height="600"></canvas>
+
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+// read player name from URL (if provided)
+function getQueryParam(name) {
+  const params = new URLSearchParams(window.location.search);
+  return params.get(name);
+}
+const playerNameFromURL = getQueryParam("name") || "???";
+
+let player = { x:0, y:0, width:40, height:40, dy:0, dx:0, emoji:"👹" };
+const gravity=0.5, jumpStrength=-12, moveSpeed=5;
+let platforms=[], keys={}, score=0;
+
+// Habilidade Fogo
+let fireCharge = 0, maxFireCharge = 100;
+const fireBar = document.getElementById("fireBar");
+
+// Plataformas vermelhas temporárias
+let firePlatforms = []; // {x, y, width, height, spawnTime}
+
+// build platform with touchedTime (for black platforms)
+function createPlatform(x,y,width=100,height=10,type="normal"){ return {x,y,width,height,type,touchedTime:null}; }
+
+function resetGame(){
+  platforms=[];
+  // Plataforma inicial estável
+  const firstPlat = createPlatform(150,500,100,"normal");
+  platforms.push(firstPlat);
+
+  // Outras plataformas (pretas = breakable may appear)
+  for(let i=1;i<5;i++){
+    const rnd = Math.random();
+    const t = rnd < 0.25 ? "breakable" : "normal";
+    platforms.push(createPlatform(Math.random()*300,500-i*120,100,10,t));
+  }
+
+  // Player começa exatamente sobre a primeira plataforma
+  player.x = firstPlat.x + (firstPlat.width - player.width)/2;
+  player.y = firstPlat.y - player.height;
+
+  player.dy=0; score=0;
+  startTime=Date.now(); lastTime=Date.now(); isGameOver=false;
+  fireCharge=0;
+  firePlatforms = [];
+}
+
+let isGameOver=false;
+let startTime=0, elapsedTime=0, lastTime=Date.now();
+
+function update(dt){
+  dt/=16.6667;
+  // Movimento
+  if(keys["arrowleft"]||keys["a"]) player.dx=-moveSpeed*dt;
+  else if(keys["arrowright"]||keys["d"]) player.dx=moveSpeed*dt;
+  else player.dx=0;
+  player.x+=player.dx;
+  if(player.x<-player.width) player.x=canvas.width;
+  if(player.x>canvas.width) player.x=-player.width;
+
+  player.dy+=gravity*dt;
+  player.y+=player.dy*dt;
+
+  // Colisão com plataformas (inclui firePlatforms)
+  for(let plat of platforms.concat(firePlatforms)){
+    if(player.dy>0 && player.x<plat.x+plat.width && player.x+player.width>plat.x &&
+       player.y+player.height<plat.y+10 && player.y+player.height+player.dy>=plat.y){
+      player.dy=jumpStrength;
+      // if platform is breakable black, mark touchedTime
+      if(plat.type === "breakable" && plat.touchedTime === null){
+        plat.touchedTime = Date.now();
+      }
+    }
+  }
+
+  // Subir acima da tela
+  if(player.y<300){
+    const diff=300-player.y;
+    player.y=300;
+    platforms.forEach(p=>p.y+=diff);
+    firePlatforms.forEach(p=>p.y+=diff);
+    score+=Math.floor(diff);
+  }
+
+  // Criar novas plataformas
+  while(platforms[platforms.length-1].y>0){
+    const rnd = Math.random();
+    const t = rnd < 0.25 ? "breakable" : "normal";
+    platforms.push(createPlatform(Math.random()*300,platforms[platforms.length-1].y-120,100,10,t));
+  }
+  // Remove breakable platforms that were touched >1s ago
+  const now = Date.now();
+  platforms = platforms.filter(p => !(p.type==="breakable" && p.touchedTime && now - p.touchedTime > 1000));
+  platforms = platforms.filter(p=>p.y<canvas.height+50);
+
+  // Habilidade Fogo
+  if(fireCharge<maxFireCharge) fireCharge+=0.3*dt;
+  fireBar.style.width=(fireCharge/maxFireCharge*100)+"%";
+
+  if((keys["s"]||keys["arrowdown"]) && fireCharge>=maxFireCharge){
+    firePlatforms.push({x:player.x-30, y:player.y+40, width:100, height:10, type:"fire", spawnTime:Date.now()});
+    fireCharge=0;
+  }
+
+  // Remover plataformas vermelhas após 5 segundos
+  firePlatforms = firePlatforms.filter(p => Date.now() - p.spawnTime < 5000);
+
+  // Game Over
+  if(player.y>canvas.height && !isGameOver){
+    isGameOver=true;
+    document.getElementById("gameOverPanel").style.display="block";
+    document.getElementById("finalScore").innerText="Pontuação: "+score;
+  }
+
+  // Evento: finalizar ao chegar 10k -> grant ability and return to index.html
+  if(score>=10000 && !isGameOver){
+    // save ability for the name passed by URL
+    const name = playerNameFromURL || "???";
+    const abilities = JSON.parse(localStorage.getItem("abilities") || "{}");
+    abilities[name] = true;
+    localStorage.setItem("abilities", JSON.stringify(abilities));
+    alert("Você concluiu o Evento Demoníaco! Habilidade Fogo desbloqueada para " + name);
+    window.location.href = "index.html";
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  // Plataformas normais e pretas
+  for(let plat of platforms){
+    ctx.fillStyle = plat.type==="breakable" ? "#000000" : "#000000";
+    // breakable and normal are both black here visually; breakable logic handled above
+    ctx.fillRect(plat.x,plat.y,plat.width,plat.height);
+  }
+  // Plataformas vermelhas
+  for(let plat of firePlatforms){
+    ctx.fillStyle = "#ff0000";
+    ctx.fillRect(plat.x,plat.y,plat.width,plat.height);
+  }
+  // Player
+  ctx.font="30px serif"; ctx.textAlign="center";
+  ctx.fillText(player.emoji,player.x+player.width/2,player.y+player.height);
+
+  document.getElementById("score").innerText="Pontuação: "+score;
+  elapsedTime=Math.floor((Date.now()-startTime)/1000);
+  document.getElementById("time").innerText="Tempo: "+elapsedTime+"s";
+}
+
+function gameLoop(){
+  const now=Date.now();
+  const deltaTime=now-lastTime;
+  lastTime=now;
+  if(!isGameOver){ update(deltaTime); draw(); }
+  requestAnimationFrame(gameLoop);
+}
+
+document.addEventListener("keydown",e=>keys[e.key.toLowerCase()]=true);
+document.addEventListener("keyup",e=>keys[e.key.toLowerCase()]=false);
+document.getElementById("restartBtn").addEventListener("click",()=>window.location.href="index.html");
+
+resetGame();
+gameLoop();
+</script>
+</body>
+</html>
