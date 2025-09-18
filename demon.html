@@ -132,7 +132,7 @@ function update(dt){
   }
 
   // Remover plataformas vermelhas após 5 segundos
-  firePlatforms = firePlatforms.filter(p => Date.now() - p.spawnTime < 5000);
+  firePlatforms = firePlatforms.filter(p => Date.now() - p.spawnTime < 2000);
 
   // Game Over
   if(player.y>canvas.height && !isGameOver){
@@ -192,3 +192,4 @@ gameLoop();
 </script>
 </body>
 </html>
+
